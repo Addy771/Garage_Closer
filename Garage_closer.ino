@@ -14,11 +14,12 @@ Capable of monitoring multiple doors
 #include "FastLED.h"
 
 #define NUM_LEDS 10				// How many LEDs the strip has
-#define TIME_INCREMENT 1		// How much time each LED segment is worth in minutes
+#define TIME_INCREMENT 10		// How much time each LED segment is worth in minutes
 #define SEGMENT_BRIGHTNESS 30	// How bright an LED should be when fully on, on a scale of 0-255
 
 #define DEBOUNCE_TIME 20		// How many ms must pass before the button is considered stable
 #define NUM_CONFIRMATIONS 10	// How many seconds must pass before door state is considered stable
+#define OUTPUT_DURATION 300		// Length of the garage door opener output signal in milliseconds. May need to be tweaked if the opener doesn't respond
 
 // If the distance is between the min and max, the door is present (centimeters)
 #define MIN_DISTANCE 10
@@ -33,17 +34,14 @@ const int DOOR2_TRIG_PIN = 15;
 const int DOOR2_ECHO_PIN = 14;
 const int DOOR2_SIGNAL_PIN = 16;
 
-const int LED_DATA_PIN = 2;
-const int BTN_PIN = 9;
+const int LED_DATA_PIN = 4;
+const int BTN_PIN = 2;
+
 
 /* END OF USER CONFIGURATION SECTION */
 
-
 #define SECS_PER_SEG TIME_INCREMENT * 60ul
 FASTLED_USING_NAMESPACE
-
-// Anything over 400 cm (23200 us pulse) is "out of range"
-const unsigned int MAX_DIST = 23200;
 
 Bounce button(BTN_PIN, DEBOUNCE_TIME);	// Create an instance of the bounce2 library
 CRGB leds[NUM_LEDS];					// Array for LED strip values
@@ -72,7 +70,7 @@ door door2;
 void init_sensor(door &sensor, int trig_pin, int echo_pin, int output_pin);
 unsigned long measure_distance(door &sensor);
 void draw_led_bar(unsigned long int time);
-void update_door(door &sensor);
+int update_door(door &sensor);
 
 void setup() {
 
@@ -88,10 +86,6 @@ void setup() {
 	FastLED.addLeds<NEOPIXEL, LED_DATA_PIN>(leds, NUM_LEDS);
 
 	ref_time = millis();
-
-	/* debug
-	Serial.begin(9600);
-	while (!Serial); */
 
 }
 
@@ -125,7 +119,7 @@ void loop() {
 }
 
 // handles state machine logic for a door struct
-void update_door(door &sensor)
+int update_door(door &sensor)
 {
 	unsigned char door_present;
 	unsigned int dist = measure_distance(sensor);
@@ -134,14 +128,6 @@ void update_door(door &sensor)
 		door_present = 1;
 	else
 		door_present = 0;
-
-	/* debug
-	Serial.print("Door Present: ");
-	Serial.print(door_present);
-	Serial.print(", State: ");
-	Serial.print(sensor.door_state);
-	Serial.print(", Time: ");
-	Serial.println(remaining_time);*/
 
 	// When the sensor value stays the same, increase confirm_count
 	if (sensor.last_value == door_present && sensor.confirm_count < NUM_CONFIRMATIONS)
@@ -182,13 +168,11 @@ void update_door(door &sensor)
 		// If time runs out, close the door
 		if (remaining_time == 0)
 		{
-			// Output high for 50ms to activate garage door opener
+			// Output high for 300ms to activate garage door opener
 			digitalWrite(sensor.output_pin, HIGH);
-			delay(50);
+			delay(300);
 			digitalWrite(sensor.output_pin, LOW);
-			/* debug
-			Serial.println("!!!!!!!!!Sent door closing signal!!!!!!!!");
-			*/
+
 			sensor.door_state = DOOR_CLOSING;
 			sensor.confirm_count = 0;
 		}
@@ -212,6 +196,7 @@ void update_door(door &sensor)
 			sensor.door_state = DOOR_OPEN;
 		break;
 	}
+	return door_present;
 }
 
 // Initialize an door struct's values
@@ -234,26 +219,28 @@ unsigned long measure_distance(door &sensor)
 {
 	unsigned long t1;
 	unsigned long pulse_width;
-	unsigned int watchdog;
+	unsigned long watchdog;
 
 	// Hold the trigger pin high for 10us
 	digitalWrite(sensor.trig_pin, HIGH);
 	delayMicroseconds(10);
 	digitalWrite(sensor.trig_pin, LOW);
-
+	
 	watchdog = millis();
 	// Wait for start of echo pulse
 	while (digitalRead(sensor.echo_pin) == LOW)
-		if (millis() - watchdog >= 100)
-			return 0;	// if we didn't get an echo pulse, exit the function
+		if (millis() - watchdog >= 10)
+			return 9000;	// if we didn't get an echo pulse, exit the function
 
 	// Record the time since the pulse has started
 	t1 = micros();
 	watchdog = millis();
+
 	// Wait for the pulse to end
 	while (digitalRead(sensor.echo_pin) == HIGH)
-		if (millis() - watchdog >= 100)
-			return 0;	// if the echo pulse didn't end, exit the function
+		if (millis() - watchdog >= 30)
+			return 9001;	// if the echo pulse didn't end, exit the function
+
 
 	// The pulse has ended now, so calculate how much time passed
 	pulse_width = micros() - t1;
@@ -279,7 +266,7 @@ void draw_led_bar(unsigned long int time)
 
 		// Apply the brightness to the red channel of the current LED  
 		//leds[i] = CRGB((SEGMENT_BRIGHTNESS * brightness) / SECS_PER_SEG,0,0);      
-		leds[i] = CRGB(SEGMENT_BRIGHTNESS * (brightness / (TIME_INCREMENT * 60.0)), howgreen, 0);
+		leds[i] = CRGB(SEGMENT_BRIGHTNESS * (brightness / (TIME_INCREMENT * 60.0)), 0, 0);
 	}
 
 	FastLED.show();
